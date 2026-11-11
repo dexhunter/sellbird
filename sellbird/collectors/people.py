@@ -858,10 +858,22 @@ def emails_on_page(html: str) -> list[str]:
         if local and domain and re.fullmatch(r"[a-z0-9._%+\-]+", local, re.I) \
                 and re.fullmatch(r"[a-z0-9\-]+(?:\.[a-z0-9\-]+)+", domain, re.I):
             add(f"{local}@{domain}")
-    text = unquote(html_lib.unescape(_strip_code(html)))
+
+    def pieces(s, sep, keep, size=1 << 15):
+        # Bounded slices of s, cut at sep (kept in the slice when keep=1), so
+        # entity / percent / tag matches never straddle a cut.
+        start = 0
+        while start < len(s):
+            end = s.find(sep, start + size)
+            end = len(s) if end < 0 else end + keep
+            yield s[start:end]
+            start = end
+
+    text = "".join(unquote(html_lib.unescape(p)) for p in pieces(_strip_code(html), "<", 0))
     for m in EMAIL_RE.finditer(text):
         add(m.group(0))
-    plain = re.sub(r"(?s)<[^>]+>", " ", text)
+    plain = "".join(re.sub(r"(?s)<[^>]+>", " ", p) for p in pieces(text, ">", 1))
+    del text
     for m in _AT_DOT.finditer(plain):
         domain = re.sub(r"\s*(?:\[\s*dot\s*\]|\(\s*dot\s*\)|\{\s*dot\s*\})\s*", ".", m.group(2), flags=re.I)
         domain = domain.replace(" ", "").lower()
