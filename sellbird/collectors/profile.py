@@ -996,11 +996,12 @@ class ProfileCollector:
         return best
 
     def detect_tech(self, html: str) -> list[str]:
-        found = []
-        for name, patterns in TECH_FINGERPRINTS.items():
-            if any(re.search(p, html, re.I) for p in patterns):
-                found.append(name)
-        return sorted(found)
+        # The fingerprints are literals apart from escaped dots, so one lowered
+        # copy and substring checks match as re.I would. re.I also folds the
+        # dotted/dotless I and the long s onto ASCII; replace those first.
+        text = str.replace(html, "\u0130", "i").replace("\u0131", "i").replace("\u017f", "s").lower()
+        return sorted(name for name, patterns in TECH_FINGERPRINTS.items()
+                      if any(p.replace("\\.", ".") in text for p in patterns))
 
     @staticmethod
     def _any(html: str, patterns) -> bool:
