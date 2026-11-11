@@ -361,10 +361,10 @@ class _ProgramClaims:
         # One of its programs right after the mention, with no batch: not backing.
         self.programs = re.compile(rf"\b{prog}(?:['’]s)?\s+(?:{programs})\b", re.I)
 
-    def claims(self, html: str, domain: str, cohort) -> list:
+    def claims(self, html: str, domain: str, cohort, lines: list[str] | None = None) -> list:
         """The cohort found in each sentence that claims the program (None
         when that sentence names none), in page order. ``cohort(sentence)``
-        finds the cohort."""
+        finds the cohort. ``lines`` is ``_lines(html)`` when already known."""
         name = _domain_name(domain) if domain else ""
         # The name as written on the page may have spaces or hyphens ("Acme Corp"
         # for acmecorp.com): any separators between its letters.
@@ -372,7 +372,7 @@ class _ProgramClaims:
         subject = rf"(?:{_SELF_SUBJECT}" + (rf"|{spelled}\b" if spelled else "") + r")"
         claim_re = re.compile(rf"^{_FOUNDED_PREFIX}{subject},?(?:{self.body}|{self.later}{self.extra})", re.I)
         found_in = []
-        for sentence in _lines(html):
+        for sentence in _lines(html) if lines is None else lines:
             if not self.mention.search(sentence):
                 continue
             found = cohort(sentence)
@@ -404,15 +404,20 @@ _SUFFIXES = re.compile(r"(?<=\w{4})hq$")
 _SECOND_LEVEL = {"co", "com", "org", "net", "ac", "gov", "edu"}
 
 
-def _lines(html: str) -> list[str]:
+def _lines(html: str, stripped: str | None = None, keep=None) -> list[str]:
     """Readable sentences, with block boundaries kept (a badge isn't run into
-    the next paragraph) and entities decoded ("Y Combinator&#x27;s W20")."""
-    text = _BLOCK_TAG_RE.sub("\n", _strip_code(html))
+    the next paragraph) and entities decoded ("Y Combinator&#x27;s W20").
+    ``stripped`` is ``_strip_code(html)`` when already known. With ``keep``
+    (a regex), only lines it matches are split: a sentence it matches is in
+    such a line."""
+    text = _BLOCK_TAG_RE.sub("\n", _strip_code(html) if stripped is None else stripped)
     text = html_unescape(re.sub(r"(?s)<[^>]+>", " ", text))
     text += "\n" + "\n".join(html_unescape(a) for a in _ATTR_TEXT_RE.findall(html))
     out = []
     for line in text.split("\n"):
-        line = re.sub(r"\s+", " ", line).strip()
+        line = " ".join(line.split())      # collapse whitespace, as \s+ does
+        if keep is not None and not keep.search(line):
+            continue
         out.extend(p.strip() for p in _SENTENCE_RE.split(line) if p.strip())
     return out
 
@@ -569,12 +574,16 @@ def accelerators(html: str, domain: str = "") -> list[tuple[str, str, float]]:
         return []
     out = []
     stripped = _strip_code(html)
+    # The same sentences for every program; only those naming one can claim it.
+    named = re.compile("|".join(f"(?:{c.mention.pattern})" for _, c, _ in _ACC_CLAIMS), re.I)
+    lines = [s for s in _lines(html, stripped, named) if named.search(s)]
+    walled = _WALL_LABEL_RE.search(stripped) is not None    # no label, no logo wall
     for (name, claims, cohort), (_, prog) in zip(_ACC_CLAIMS, ACCELERATORS):
-        found_in = claims.claims(html, domain, cohort)
+        found_in = claims.claims(html, domain, cohort, lines)
         if found_in:
             stated = next((c for c in found_in if c), "")
             out.append((name, stated, 0.9 if stated else 0.85))
-        elif _on_logo_wall(stripped, prog):
+        elif walled and _on_logo_wall(stripped, prog):
             out.append((name, "", 0.8))
     return out
 
